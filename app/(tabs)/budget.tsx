@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { Picker } from "@react-native-picker/picker";
 import { useRouter } from "expo-router";
 import { storage } from "@/utils/storage";
+import { historyManager } from "@/utils/historyManager";
 
 type Category = { id: string; name: string; deposit: number; balance: number };
 type ExpenseType = {
@@ -68,6 +69,12 @@ export default function Home() {
       if (savedDeposits) {
         setDeposits(savedDeposits);
       }
+
+      await historyManager.initializeHistory(
+        savedCategories || [],
+        savedExpenses || [],
+        savedDeposits || []
+      );
     } catch (error) {
       console.error('Error loading data:', error);
     }
@@ -83,8 +90,12 @@ export default function Home() {
     }
   };
 
+  const saveToHistory = async () => {
+    await historyManager.saveState(categories, expenses, deposits);
+  };
 
-  const addCategory = () => {
+
+  const addCategory = async () => {
     if (categoryName.trim() === "" || deposit.trim() === "") {
       Alert.alert("Missing Input", "Please enter both name and deposit.");
       return;
@@ -100,8 +111,6 @@ export default function Home() {
     };
 
     const updatedCategories = [...categories, newCategory];
-    setCategories(updatedCategories);
-
     const newDeposit = {
       id: Date.now().toString(),
       categoryName: categoryName,
@@ -109,17 +118,22 @@ export default function Home() {
       date: new Date().toLocaleDateString(),
     };
 
-    setDeposits([newDeposit, ...deposits]);
+    const updatedDeposits = [newDeposit, ...deposits];
+
+    setCategories(updatedCategories);
+    setDeposits(updatedDeposits);
 
     const total = updatedCategories.reduce((sum, cat) => sum + cat.balance, 0);
     setBalance(total);
+
+    await historyManager.saveState(updatedCategories, expenses, updatedDeposits);
 
     setCategoryName("");
     setDeposit("");
     Alert.alert("Success", `Added category: ${newCategory.name}`);
   };
 
-  const addExpense = () => {
+  const addExpense = async () => {
     if (!selectedCategoryId || expenseName.trim() === "" || expenseAmount.trim() === "") {
       Alert.alert("Missing Input", "Please complete all expense fields.");
       return;
@@ -141,8 +155,6 @@ export default function Home() {
         : cat
     );
 
-    setCategories(updatedCategories);
-
     const newExpense = {
       id: Date.now().toString(),
       name: expenseName,
@@ -151,10 +163,15 @@ export default function Home() {
       date: new Date().toLocaleDateString(),
     };
 
-    setExpenses([newExpense, ...expenses]);
+    const updatedExpenses = [newExpense, ...expenses];
+
+    setCategories(updatedCategories);
+    setExpenses(updatedExpenses);
 
     const total = updatedCategories.reduce((sum, cat) => sum + cat.balance, 0);
     setBalance(total);
+
+    await historyManager.saveState(updatedCategories, updatedExpenses, deposits);
 
     setExpenseName("");
     setExpenseAmount("");
@@ -174,7 +191,7 @@ export default function Home() {
   }
 };
 
-  const handleSaveEdit = () => {
+  const handleSaveEdit = async () => {
     if (!editingCategory) return;
 
     const depositValue = parseFloat(editDeposit);
@@ -194,8 +211,6 @@ export default function Home() {
         : cat
     );
 
-    setCategories(updatedCategories);
-
     const newDeposit = {
       id: Date.now().toString(),
       categoryName: editName,
@@ -203,10 +218,15 @@ export default function Home() {
       date: new Date().toLocaleDateString(),
     };
 
-    setDeposits([newDeposit, ...deposits]);
+    const updatedDeposits = [newDeposit, ...deposits];
+
+    setCategories(updatedCategories);
+    setDeposits(updatedDeposits);
 
     const total = updatedCategories.reduce((sum, cat) => sum + cat.balance, 0);
     setBalance(total);
+
+    await historyManager.saveState(updatedCategories, expenses, updatedDeposits);
 
     setEditingCategory(null);
     setEditName("");
@@ -230,12 +250,14 @@ export default function Home() {
         {
           text: "Delete",
           style: "destructive",
-          onPress: () => {
+          onPress: async () => {
             const updatedCategories = categories.filter((cat) => cat.id !== id);
 
             const total = updatedCategories.reduce((sum, cat) => sum + cat.balance, 0);
             setCategories(updatedCategories);
             setBalance(total);
+
+            await historyManager.saveState(updatedCategories, expenses, deposits);
 
             Alert.alert("Deleted", `"${categoryToDelete.name}" has been removed.`);
           },

@@ -3,6 +3,7 @@ import { useLocalSearchParams, router } from "expo-router";
 import { useState, useEffect } from "react";
 import { Ionicons } from "@expo/vector-icons";
 import { storage } from "@/utils/storage";
+import { historyManager } from "@/utils/historyManager";
 
 type Expense = {
   id: string | number;
@@ -21,16 +22,11 @@ type Deposit = {
 
 type TabType = 'expenses' | 'deposits';
 
-type HistoryState = {
-  expenses: Expense[];
-  deposits: Deposit[];
-};
-
 export default function History() {
   const { expenses, deposits } = useLocalSearchParams();
   const [activeTab, setActiveTab] = useState<TabType>('expenses');
-  const [history, setHistory] = useState<HistoryState[]>([]);
-  const [currentIndex, setCurrentIndex] = useState(-1);
+  const [canUndoState, setCanUndoState] = useState(false);
+  const [canRedoState, setCanRedoState] = useState(false);
 
   const expenseList: Expense[] =
     typeof expenses === "string" && expenses
@@ -43,41 +39,20 @@ export default function History() {
       : [];
 
   useEffect(() => {
-    loadHistory();
+    checkUndoRedoState();
   }, []);
 
-  const loadHistory = async () => {
-    const savedHistory = await storage.getItem<HistoryState[]>('transaction_history');
-    if (savedHistory && savedHistory.length > 0) {
-      setHistory(savedHistory);
-      setCurrentIndex(savedHistory.length - 1);
-    } else {
-      const initialState = { expenses: expenseList, deposits: depositList };
-      setHistory([initialState]);
-      setCurrentIndex(0);
-      await storage.setItem('transaction_history', [initialState]);
-    }
-  };
-
-  const saveToHistory = async (newState: HistoryState) => {
-    const newHistory = history.slice(0, currentIndex + 1);
-    newHistory.push(newState);
-
-    if (newHistory.length > 50) {
-      newHistory.shift();
-    }
-
-    setHistory(newHistory);
-    setCurrentIndex(newHistory.length - 1);
-    await storage.setItem('transaction_history', newHistory);
+  const checkUndoRedoState = async () => {
+    const canUndo = await historyManager.canUndo();
+    const canRedo = await historyManager.canRedo();
+    setCanUndoState(canUndo);
+    setCanRedoState(canRedo);
   };
 
   const undo = async () => {
-    if (currentIndex > 0) {
-      const newIndex = currentIndex - 1;
-      setCurrentIndex(newIndex);
-      const previousState = history[newIndex];
-
+    const previousState = await historyManager.undo();
+    if (previousState) {
+      await storage.setItem('categories', previousState.categories);
       await storage.setItem('expenses', previousState.expenses);
       await storage.setItem('deposits', previousState.deposits);
 
@@ -86,11 +61,9 @@ export default function History() {
   };
 
   const redo = async () => {
-    if (currentIndex < history.length - 1) {
-      const newIndex = currentIndex + 1;
-      setCurrentIndex(newIndex);
-      const nextState = history[newIndex];
-
+    const nextState = await historyManager.redo();
+    if (nextState) {
+      await storage.setItem('categories', nextState.categories);
       await storage.setItem('expenses', nextState.expenses);
       await storage.setItem('deposits', nextState.deposits);
 
@@ -111,12 +84,10 @@ export default function History() {
           text: "Clear All",
           style: "destructive",
           onPress: async () => {
+            await storage.removeItem('categories');
             await storage.removeItem('expenses');
             await storage.removeItem('deposits');
-            await storage.removeItem('transaction_history');
-
-            setHistory([]);
-            setCurrentIndex(-1);
+            await historyManager.clearHistory();
 
             router.back();
           }
@@ -125,30 +96,27 @@ export default function History() {
     );
   };
 
-  const currentExpenses = currentIndex >= 0 ? history[currentIndex]?.expenses || expenseList : expenseList;
-  const currentDeposits = currentIndex >= 0 ? history[currentIndex]?.deposits || depositList : depositList;
-
   return (
     <View style={styles.container}>
       <Text style={styles.title}>Transaction History</Text>
 
       <View style={styles.buttonContainer}>
         <TouchableOpacity
-          style={[styles.actionButton, currentIndex <= 0 && styles.disabledButton]}
+          style={[styles.actionButton, !canUndoState && styles.disabledButton]}
           onPress={undo}
-          disabled={currentIndex <= 0}
+          disabled={!canUndoState}
         >
-          <Ionicons name="arrow-undo" size={20} color={currentIndex <= 0 ? "#ccc" : "#cc6c0cff"} />
-          <Text style={[styles.buttonText, currentIndex <= 0 && styles.disabledText]}>Undo</Text>
+          <Ionicons name="arrow-undo" size={20} color={!canUndoState ? "#ccc" : "#cc6c0cff"} />
+          <Text style={[styles.buttonText, !canUndoState && styles.disabledText]}>Undo</Text>
         </TouchableOpacity>
 
         <TouchableOpacity
-          style={[styles.actionButton, currentIndex >= history.length - 1 && styles.disabledButton]}
+          style={[styles.actionButton, !canRedoState && styles.disabledButton]}
           onPress={redo}
-          disabled={currentIndex >= history.length - 1}
+          disabled={!canRedoState}
         >
-          <Ionicons name="arrow-redo" size={20} color={currentIndex >= history.length - 1 ? "#ccc" : "#cc6c0cff"} />
-          <Text style={[styles.buttonText, currentIndex >= history.length - 1 && styles.disabledText]}>Redo</Text>
+          <Ionicons name="arrow-redo" size={20} color={!canRedoState ? "#ccc" : "#cc6c0cff"} />
+          <Text style={[styles.buttonText, !canRedoState && styles.disabledText]}>Redo</Text>
         </TouchableOpacity>
 
         <TouchableOpacity
@@ -192,7 +160,7 @@ export default function History() {
 
       <ScrollView>
         {activeTab === 'expenses' ? (
-          currentExpenses.length === 0 ? (
+          expenseList.length === 0 ? (
             <Text style={styles.empty}>No expenses recorded yet.</Text>
           ) : (
             <View style={styles.table}>
@@ -203,7 +171,7 @@ export default function History() {
                 <Text style={[styles.cell, styles.headerCell, { flex: 1.7 }]}>Date</Text>
               </View>
 
-              {currentExpenses.map((exp: Expense) => (
+              {expenseList.map((exp: Expense) => (
                 <View key={exp.id} style={styles.row}>
                   <Text
                     style={[styles.cell, { flex: 1.5 }]}
@@ -242,7 +210,7 @@ export default function History() {
             </View>
           )
         ) : (
-          currentDeposits.length === 0 ? (
+          depositList.length === 0 ? (
             <Text style={styles.empty}>No deposits recorded yet.</Text>
           ) : (
             <View style={styles.table}>
@@ -252,7 +220,7 @@ export default function History() {
                 <Text style={[styles.cell, styles.headerCell, { flex: 1.7 }]}>Date</Text>
               </View>
 
-              {currentDeposits.map((dep: Deposit) => (
+              {depositList.map((dep: Deposit) => (
                 <View key={dep.id} style={styles.row}>
                   <Text
                     style={[styles.cell, { flex: 2 }]}
